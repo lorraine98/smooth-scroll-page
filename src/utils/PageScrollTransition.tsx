@@ -18,6 +18,7 @@ let previousTouchMove = 0;
 let isScrolling = false;
 let isTransitionAfterComponentsToRenderChanged = false;
 const isNil = (value: any) => value === undefined || value === null;
+const isNull = (value: any) => value === null;
 
 interface Props {
   animationTimer?: number;
@@ -155,12 +156,10 @@ export const PageScrollTransition = ({
 
   const touchMove = useCallback(
     (event: any) => {
-      if (previousTouchMove) {
-        const cur = Math.floor(event.touches[0].clientY);
-        const prev = Math.floor(previousTouchMove);
-        if (cur > prev) {
+      if (!isNull(previousTouchMove)) {
+        if (event.touches[0].clientY > previousTouchMove) {
           scrollWindowUp();
-        } else if (cur + 100 < prev) {
+        } else {
           scrollWindowDown();
         }
       } else {
@@ -219,6 +218,7 @@ export const PageScrollTransition = ({
 
   useEffect(() => {
     isScrolling = false;
+    previousTouchMove = 0;
     if (componentIndex > prevComponentIndex) {
       addNextComponent();
     }
