@@ -5,60 +5,66 @@ import React, {
   useState,
   useMemo,
 } from "react";
-import { usePrevious } from "./usePrevValue";
+import PropTypes from "prop-types";
 
+import * as Events from "./Events";
+import { isNil, isNull, isPositiveNumber } from "./utils";
+import usePrevious from "./usePrevValue";
+
+const DEFAULT_ANIMATION_TIMER = 1000;
+const DEFAULT_ANIMATION = "ease-in-out";
+const DEFAULT_CONTAINER_HEIGHT = "100vh";
+const DEFAULT_CONTAINER_WIDTH = "100vw";
 const DEFAULT_COMPONENT_INDEX = 0;
 const DEFAULT_COMPONENTS_TO_RENDER_LENGTH = 0;
 
+const DEFAULT_ANIMATION_TIMER_BUFFER = 200;
 const KEY_UP = 38;
 const KEY_DOWN = 40;
 const MINIMAL_DELTA_Y_DIFFERENCE = 1;
+const DISABLED_CLASS_NAME = "rps-scroll--disabled";
 
-let previousTouchMove = 0;
+let previousTouchMove = null;
 let isScrolling = false;
+let isBodyScrollEnabled = true;
 let isTransitionAfterComponentsToRenderChanged = false;
-const isNil = (value: any) => value === undefined || value === null;
-const isNull = (value: any) => value === null;
-
-interface Props {
-  animationTimer?: number;
-  animationTimerBuffer?: number;
-  children: JSX.Element[];
-  containerHeight?: number | string;
-  containerWidth?: number | string;
-  customPageNumber: number;
-  pageOnChange: (number: number) => void;
-}
 
 export const PageScrollTransition = ({
-  animationTimer = 1000,
-  animationTimerBuffer = 200,
+  animationTimer,
+  animationTimerBuffer,
+  blockScrollDown,
+  blockScrollUp,
   children,
-  containerHeight = "100vh",
-  containerWidth = "100vw",
+  containerHeight,
+  containerWidth,
   customPageNumber,
+  handleScrollUnavailable,
+  onBeforePageScroll,
   pageOnChange,
-}: Props) => {
+  renderAllPagesOnFirstRender,
+  transitionTimingFunction,
+}) => {
   const [componentIndex, setComponentIndex] = useState(DEFAULT_COMPONENT_INDEX);
   const [componentsToRenderLength, setComponentsToRenderLength] = useState(
     DEFAULT_COMPONENTS_TO_RENDER_LENGTH
   );
   const prevComponentIndex = usePrevious(componentIndex);
-  const scrollContainer = useRef<HTMLDivElement>(null);
-  const pageContainer = useRef<HTMLDivElement>(null);
+  const scrollContainer = useRef(null);
+  const pageContainer = useRef(null);
   const lastScrolledElement = useRef(null);
   const isMountedRef = useRef(false);
-  const containersRef = useRef<boolean[]>([]);
+  const containersRef = useRef([]);
+  children = useMemo(() => React.Children.toArray(children), [children]);
 
   const positions = useMemo(
     () =>
       children.reduce(
         (_positions, _children) => {
-          const lastElement: number[] = _positions.slice(-1);
+          const lastElement = _positions.slice(-1);
           const height = _children.props.height
-            ? parseInt(_children.props.height, 10)
+            ? parseInt(_children.props.height)
             : 100;
-          return _positions.concat([lastElement[0] - height]);
+          return _positions.concat([lastElement - height]);
         },
         [0]
       ),
@@ -66,13 +72,14 @@ export const PageScrollTransition = ({
   );
 
   const scrollPage = useCallback(
-    (nextComponentIndex: number) => {
-      if (!pageContainer.current) {
-        return;
+    (nextComponentIndex) => {
+      if (onBeforePageScroll) {
+        onBeforePageScroll(nextComponentIndex);
       }
+
       pageContainer.current.style.transform = `translate3d(0, ${positions[nextComponentIndex]}%, 0)`;
     },
-    [positions]
+    [onBeforePageScroll, positions]
   );
 
   const addNextComponent = useCallback(
@@ -94,7 +101,9 @@ export const PageScrollTransition = ({
   );
 
   const checkRenderOnMount = useCallback(() => {
-    if (!isNil(children[DEFAULT_COMPONENT_INDEX + 1])) {
+    if (renderAllPagesOnFirstRender) {
+      setComponentsToRenderLength(React.Children.count(children));
+    } else if (!isNil(children[DEFAULT_COMPONENT_INDEX + 1])) {
       const componentsToRenderAdditionally = positions.filter(
         (position) => Math.abs(position) < 200
       ).length;
@@ -103,12 +112,30 @@ export const PageScrollTransition = ({
         DEFAULT_COMPONENTS_TO_RENDER_LENGTH + componentsToRenderAdditionally
       );
     }
-  }, [addNextComponent, children, positions]);
+  }, [addNextComponent, children, positions, renderAllPagesOnFirstRender]);
+
+  const disableScroll = useCallback(() => {
+    if (isBodyScrollEnabled) {
+      isBodyScrollEnabled = false;
+      window.scrollTo({
+        left: 0,
+        top: 0,
+        behavior: "smooth",
+      });
+      document.body.classList.add(DISABLED_CLASS_NAME);
+      document.documentElement.classList.add(DISABLED_CLASS_NAME);
+    }
+  }, []);
+
+  const enableDocumentScroll = useCallback(() => {
+    if (!isBodyScrollEnabled) {
+      isBodyScrollEnabled = true;
+      document.body.classList.remove(DISABLED_CLASS_NAME);
+      document.documentElement.classList.remove(DISABLED_CLASS_NAME);
+    }
+  }, []);
 
   const setRenderComponents = useCallback(() => {
-    if (!containersRef.current) {
-      return null;
-    }
     const newComponentsToRender = [];
 
     let i = 0;
@@ -125,8 +152,9 @@ export const PageScrollTransition = ({
   }, [children, componentsToRenderLength]);
 
   const scrollWindowDown = useCallback(() => {
-    if (!isScrolling) {
+    if (!isScrolling && !blockScrollDown) {
       if (!isNil(containersRef.current[componentIndex + 1])) {
+        disableScroll();
         isScrolling = true;
         scrollPage(componentIndex + 1);
 
@@ -135,13 +163,28 @@ export const PageScrollTransition = ({
             setComponentIndex((prevState) => prevState + 1);
           }
         }, animationTimer + animationTimerBuffer);
+      } else {
+        enableDocumentScroll();
+        if (handleScrollUnavailable) {
+          handleScrollUnavailable();
+        }
       }
     }
-  }, [animationTimer, animationTimerBuffer, componentIndex, scrollPage]);
+  }, [
+    animationTimer,
+    animationTimerBuffer,
+    blockScrollDown,
+    componentIndex,
+    disableScroll,
+    enableDocumentScroll,
+    handleScrollUnavailable,
+    scrollPage,
+  ]);
 
   const scrollWindowUp = useCallback(() => {
-    if (!isScrolling) {
+    if (!isScrolling && !blockScrollUp) {
       if (!isNil(containersRef.current[componentIndex - 1])) {
+        disableScroll();
         isScrolling = true;
         scrollPage(componentIndex - 1);
 
@@ -150,16 +193,32 @@ export const PageScrollTransition = ({
             setComponentIndex((prevState) => prevState - 1);
           }
         }, animationTimer + animationTimerBuffer);
+      } else {
+        enableDocumentScroll();
+        if (handleScrollUnavailable) {
+          handleScrollUnavailable();
+        }
       }
     }
-  }, [animationTimer, animationTimerBuffer, componentIndex, scrollPage]);
+  }, [
+    animationTimer,
+    animationTimerBuffer,
+    blockScrollUp,
+    componentIndex,
+    disableScroll,
+    enableDocumentScroll,
+    handleScrollUnavailable,
+    scrollPage,
+  ]);
 
   const touchMove = useCallback(
-    (event: any) => {
+    (event) => {
       if (!isNull(previousTouchMove)) {
-        if (event.touches[0].clientY > previousTouchMove) {
+        const cur = Math.floor(event.touches[0].clientY);
+        const prev = Math.floor(previousTouchMove);
+        if (cur > prev) {
           scrollWindowUp();
-        } else {
+        } else if (cur + 100 < prev) {
           scrollWindowDown();
         }
       } else {
@@ -170,9 +229,9 @@ export const PageScrollTransition = ({
   );
 
   const wheelScroll = useCallback(
-    (event: any) => {
+    (event) => {
       if (Math.abs(event.deltaY) > MINIMAL_DELTA_Y_DIFFERENCE) {
-        if (event.deltaY > 0) {
+        if (isPositiveNumber(event.deltaY)) {
           lastScrolledElement.current = event.target;
           scrollWindowDown();
         } else {
@@ -185,7 +244,7 @@ export const PageScrollTransition = ({
   );
 
   const keyPress = useCallback(
-    (event: any) => {
+    (event) => {
       if (event.keyCode === KEY_UP) {
         scrollWindowUp();
       }
@@ -197,14 +256,14 @@ export const PageScrollTransition = ({
   );
 
   useEffect(() => {
-    const instance = scrollContainer.current as HTMLDivElement;
-    instance.addEventListener("touchmove", touchMove, { passive: true });
-    instance.addEventListener("keydown", keyPress);
+    const instance = scrollContainer.current;
+    instance.addEventListener(Events.TOUCHMOVE, touchMove);
+    instance.addEventListener(Events.KEYDOWN, keyPress);
     return () => {
-      instance.removeEventListener("touchmove", touchMove);
-      instance.removeEventListener("keydown", keyPress);
+      instance.removeEventListener(Events.TOUCHMOVE, touchMove);
+      instance.removeEventListener(Events.KEYDOWN, keyPress);
     };
-  }, [keyPress, touchMove]);
+  }, [touchMove, keyPress]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -218,7 +277,7 @@ export const PageScrollTransition = ({
 
   useEffect(() => {
     isScrolling = false;
-    previousTouchMove = 0;
+    previousTouchMove = null;
     if (componentIndex > prevComponentIndex) {
       addNextComponent();
     }
@@ -297,17 +356,43 @@ export const PageScrollTransition = ({
     >
       <div
         ref={pageContainer}
+        onWheel={wheelScroll}
         style={{
           height: "100%",
           width: "100%",
-          transition: `transform ${animationTimer}ms ease-in-out`,
+          transition: `transform ${animationTimer}ms ${transitionTimingFunction}`,
           outline: "none",
         }}
-        tabIndex={customPageNumber}
-        onWheel={wheelScroll}
+        tabIndex={0}
       >
         {setRenderComponents()}
       </div>
     </div>
   );
+};
+
+PageScrollTransition.propTypes = {
+  animationTimer: PropTypes.number,
+  animationTimerBuffer: PropTypes.number,
+  blockScrollDown: PropTypes.bool,
+  blockScrollUp: PropTypes.bool,
+  children: PropTypes.any,
+  containerHeight: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  containerWidth: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  customPageNumber: PropTypes.number,
+  handleScrollUnavailable: PropTypes.func,
+  onBeforePageScroll: PropTypes.func,
+  pageOnChange: PropTypes.func,
+  renderAllPagesOnFirstRender: PropTypes.bool,
+  transitionTimingFunction: PropTypes.string,
+};
+
+PageScrollTransition.defaultProps = {
+  animationTimer: DEFAULT_ANIMATION_TIMER,
+  animationTimerBuffer: DEFAULT_ANIMATION_TIMER_BUFFER,
+  transitionTimingFunction: DEFAULT_ANIMATION,
+  containerHeight: DEFAULT_CONTAINER_HEIGHT,
+  containerWidth: DEFAULT_CONTAINER_WIDTH,
+  blockScrollUp: false,
+  blockScrollDown: false,
 };

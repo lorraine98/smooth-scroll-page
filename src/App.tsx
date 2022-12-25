@@ -1,9 +1,9 @@
 import React, { useState } from "react";
-import { PageScrollTransition } from "./utils/PageScrollTransition";
 import { FirstComp } from "./components/FirstComp";
 import { SecondComp } from "./components/SecondComp";
 import { ThirdComp } from "./components/ThirdComp";
 import { FourthComp } from "./components/FourthComp";
+import { PageScrollTransition } from "./utils/PageScrollTransition";
 
 const SCROLL_ANIMATION_DURATION = 1000;
 
